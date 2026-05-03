@@ -1,0 +1,15 @@
+# Azure Security Auditor - Ignore list
+.env
+*.log
+*.json
+*.csv
+*.pdf
+.vscode/
+.idea/
+infrastructure/
+backend/
+dist/
+build/
+.DS_Store
+Thumbs.db
+CatchingMoles-Rapport/
