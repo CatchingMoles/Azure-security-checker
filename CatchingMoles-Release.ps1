@@ -4,7 +4,7 @@ CATCHING MOLES SECURITY AUDITOR - RELEASE BUILD
 ===============================================================================
 
 Version: 2.0.0
-Built: 2026-05-03 13:07:50
+Built: 2026-05-05 14:18:17
 Architecture: Zero-Crypto / Random ID based anonymization
 
 This is a compiled release file containing:
@@ -2162,7 +2162,7 @@ function Get-ComplianceFrameworks {
     [OutputType([string])]
     param(
         [string]$DisplayName = "",
-        [string]$Categories  = ""
+        [string]$Categories = ""
     )
 
     $frameworks = [System.Collections.Generic.List[string]]::new()
@@ -2229,10 +2229,10 @@ function Get-ComplianceFindings {
     Write-AuditLog -Level Info -Message "`n=== COMPLIANCE AUDIT (Defender for Cloud / CSPM) ==="
     Write-AuditLog -Level Info -Message "Scanning security assessments and regulatory compliance scores...`n"
 
-    $mappingData      = @()
+    $mappingData = @()
     $anonymousFindings = @()
-    $assessmentCount  = 0
-    $issuesCount      = 0
+    $assessmentCount = 0
+    $issuesCount = 0
 
     # -------------------------------------------------------------------------
     # PRE-CHECK: Is Az.Security module beschikbaar?
@@ -2255,71 +2255,36 @@ function Get-ComplianceFindings {
     }
 
     # =========================================================================
-    # SECTIE 0: PRICING TIER CHECK (Foundational vs. Defender CSPM)
+    # SECTIE 0: PRICING TIER CHECK (Feature Discovery)
     # =========================================================================
 
     Write-AuditLog -Level Info -Message "Checking Defender for Cloud pricing tier (CloudPosture)..."
 
+    $isPaidPlan = $false  # Default: assume Foundational (Free) plan
+
     try {
         $cloudPosturePricing = Get-AzSecurityPricing -Name "CloudPosture" -ErrorAction Stop
-
         $pricingTier = if ($cloudPosturePricing.PricingTier) { $cloudPosturePricing.PricingTier } else { "Free" }
+        $isPaidPlan = ($pricingTier -eq "Standard")
 
-        if ($pricingTier -eq "Standard") {
-            # Betaald Defender CSPM plan actief
+        if ($isPaidPlan) {
             Write-Host "  [OK] " -ForegroundColor Green -NoNewline
             Write-Host "Defender CSPM: Standard plan active (~`$5/resource/month)"
             Write-Host "       Attack Path Analysis, NIS2/ISO 27001 compliance tracking enabled" -ForegroundColor DarkGray
             Write-AuditLog -Level Info -Message "Defender CSPM: Standard (paid) plan active"
         }
         else {
-            # Foundational CSPM (gratis) â€” genereer finding
-            $randomId = (New-Guid).ToString()
-            $issuesCount++
-
-            $issueText       = "Foundational CSPM (Free) in gebruik. Geavanceerde compliance tracking voor NIS2/ISO en Attack Path Analysis zijn uitgeschakeld."
-            $recommendText   = "Upgrade naar Defender CSPM voor volledige ondersteuning van de Microsoft Cloud Security Benchmark en NIS2-compliance."
-
-            Write-Host "  [!] " -ForegroundColor Yellow -NoNewline
-            Write-Host "[Medium] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Defender for Cloud: Foundational CSPM (Free plan)"
-            Write-Host "      - $issueText" -ForegroundColor DarkGray
-            Write-Host "      - Recommendation: $recommendText" -ForegroundColor DarkGray
+            Write-Host "  [INFO] " -ForegroundColor Cyan -NoNewline
+            Write-Host "Defender CSPM: Foundational (Free) plan detected - advanced compliance tracking will be skipped"
             Write-AuditLog -Level Info -Message "Defender CSPM: Free (Foundational) plan detected"
-
-            # CONFIDENTIAL MAPPING
-            $mappingData += [PSCustomObject]@{
-                RandomId             = $randomId
-                RealResourceId       = "/subscriptions/$($Subscription.Id)/providers/Microsoft.Security/pricings/CloudPosture"
-                RealResourceType     = "Defender CSPM Plan"
-                RealAssessmentName   = "Foundational CSPM (Free) detected"
-                RealSubscriptionName = $Subscription.Name
-                Severity             = "Medium"
-                DefenderSeverity     = "Medium"
-                StatusDescription    = $recommendText
-                ComplianceFrameworks = "NIS2, ISO 27001, MCSB"
-            }
-
-            # SAFE ANONYMOUS PAYLOAD
-            $anonymousFindings += [PSCustomObject]@{
-                RandomId             = $randomId
-                ResourceType         = "Defender CSPM Plan"
-                Location             = "Global"
-                Severity             = "Medium"
-                Issues               = @($issueText)
-                OWASP                = "A05"
-                ComplianceFrameworks = "NIS2, ISO 27001, MCSB"
-                DefenderCategory     = "Pricing"
-                PricingTier          = $pricingTier
-                Recommendation       = $recommendText
-            }
         }
     }
     catch {
-        # Geen rechten of pricing API niet beschikbaar - non-fatal
-        Write-AuditLog -Level Warning -Message "Pricing tier check skipped (non-fatal): $($_.Exception.Message)"
+        # Geen rechten of pricing API niet beschikbaar - non-fatal, ga door met basis-assessments
+        Write-AuditLog -Level Warning -Message "Pricing tier check failed (non-fatal): $($_.Exception.Message) - assuming Free plan"
         Write-Host "  [WARN] " -ForegroundColor Yellow -NoNewline
-        Write-Host "Pricing tier check skipped (insufficient permissions or API unavailable)"
+        Write-Host "Pricing tier check skipped (insufficient permissions) - proceeding with basic assessments"
+        $isPaidPlan = $false
     }
 
     # =========================================================================
@@ -2349,7 +2314,7 @@ function Get-ComplianceFindings {
 
                 $sortedAssessments = $unhealthyAssessments | Sort-Object {
                     $s = $_.Metadata.Severity
-                    if ($severityOrder.ContainsKey($s)) { $severityOrder[$s] } else { 4 }
+                    if ($s -and $severityOrder.ContainsKey($s)) { $severityOrder[$s] } else { 4 }
                 }
 
                 # Cap op 50 meest kritieke bevindingen (performance + output beheersbaar)
@@ -2361,18 +2326,18 @@ function Get-ComplianceFindings {
                     $assessmentCount++
 
                     # Defensief: properties kunnen null zijn
-                    $displayName    = if ($assessment.DisplayName)            { $assessment.DisplayName }            else { "Unknown Assessment" }
-                    $defenderSev    = if ($assessment.Metadata.Severity)      { $assessment.Metadata.Severity }      else { "Low" }
-                    $categoriesRaw  = if ($assessment.Metadata.Categories)    { $assessment.Metadata.Categories }    else { @() }
-                    $resourceId     = if ($assessment.ResourceDetails.Id)     { $assessment.ResourceDetails.Id }     else { "" }
-                    $statusDesc     = if ($assessment.Status.Description)     { $assessment.Status.Description }     else { "" }
+                    $displayName = if ($assessment.DisplayName) { $assessment.DisplayName }            else { "Unknown Assessment" }
+                    $defenderSev = if ($assessment.Metadata.Severity) { $assessment.Metadata.Severity }      else { "Low" }
+                    $categoriesRaw = if ($assessment.Metadata.Categories) { $assessment.Metadata.Categories }    else { @() }
+                    $resourceId = if ($assessment.ResourceDetails.Id) { $assessment.ResourceDetails.Id }     else { "" }
+                    $statusDesc = if ($assessment.Status.Description) { $assessment.Status.Description }     else { "" }
 
                     # Severity doorvertalen naar Catching Moles niveaus
                     $severity = switch ($defenderSev) {
-                        "High"   { "High" }
+                        "High" { "High" }
                         "Medium" { "Medium" }
-                        "Low"    { "Low" }
-                        default  { "Low" }
+                        "Low" { "Low" }
+                        default { "Low" }
                     }
 
                     # Category als string
@@ -2390,7 +2355,8 @@ function Get-ComplianceFindings {
                     # Privacy-safe resource ID suffix (laatste 8 tekens = geen volledige PII)
                     $resourceIdSuffix = if ($resourceId.Length -ge 8) {
                         $resourceId.Substring($resourceId.Length - 8)
-                    } else { "unknown" }
+                    }
+                    else { "unknown" }
 
                     # Random GUID (Zero-Crypto)
                     $randomId = (New-Guid).ToString()
@@ -2398,9 +2364,9 @@ function Get-ComplianceFindings {
 
                     # Console output
                     $severityColor = switch ($severity) {
-                        "High"   { "Red" }
+                        "High" { "Red" }
                         "Medium" { "Yellow" }
-                        default  { "DarkYellow" }
+                        default { "DarkYellow" }
                     }
 
                     Write-Host "  [!] " -ForegroundColor $severityColor -NoNewline
@@ -2456,110 +2422,153 @@ function Get-ComplianceFindings {
     }
 
     # =========================================================================
-    # SECTIE 2: REGULATORY COMPLIANCE SCORES
+    # SECTIE 2: REGULATORY COMPLIANCE SCORES (alleen bij Defender CSPM Standard)
     # =========================================================================
 
-    Write-AuditLog -Level Info -Message "Fetching regulatory compliance scores..."
+    if ($isPaidPlan) {
+        Write-AuditLog -Level Info -Message "Fetching regulatory compliance scores (Defender CSPM Standard)..."
 
-    # Standaarden die we willen rapporteren (flexibele matching)
-    $targetStandards = @(
-        @{ Match = "nis2";                                  Name = "NIS2" }
-        @{ Match = "iso-27001|iso27001";                    Name = "ISO 27001" }
-        @{ Match = "mcsb|microsoft-cloud-security";         Name = "MCSB" }
-        @{ Match = "azure-security-benchmark|asb-v|asb$";   Name = "Azure Security Benchmark" }
-        @{ Match = "cis-azure|azure-cis";                   Name = "CIS Azure" }
-    )
+        # Standaarden die we willen rapporteren (flexibele matching)
+        $targetStandards = @(
+            @{ Match = "nis2"; Name = "NIS2" }
+            @{ Match = "iso-27001|iso27001"; Name = "ISO 27001" }
+            @{ Match = "mcsb|microsoft-cloud-security"; Name = "MCSB" }
+            @{ Match = "azure-security-benchmark|asb-v|asb$"; Name = "Azure Security Benchmark" }
+            @{ Match = "cis-azure|azure-cis"; Name = "CIS Azure" }
+        )
 
-    try {
-        $complianceStandards = Get-AzSecurityRegulatoryComplianceStandard -ErrorAction Stop
+        try {
+            $complianceStandards = Get-AzSecurityRegulatoryComplianceStandard -ErrorAction Stop
 
-        if ($complianceStandards -and $complianceStandards.Count -gt 0) {
-            Write-AuditLog -Level Info -Message "  > Found $($complianceStandards.Count) compliance standard(s)"
+            if ($complianceStandards -and $complianceStandards.Count -gt 0) {
+                Write-AuditLog -Level Info -Message "  > Found $($complianceStandards.Count) compliance standard(s)"
 
-            foreach ($target in $targetStandards) {
-                $matched = $complianceStandards | Where-Object { $_.Name -match $target.Match }
+                foreach ($target in $targetStandards) {
+                    $matched = $complianceStandards | Where-Object { $_.Name -match $target.Match }
 
-                foreach ($standard in $matched) {
-                    $passed  = [int]($standard.PassedControls)
-                    $failed  = [int]($standard.FailedControls)
-                    $skipped = [int]($standard.SkippedControls)
-                    $total   = $passed + $failed
+                    foreach ($standard in $matched) {
+                        $passed = [int]($standard.PassedControls)
+                        $failed = [int]($standard.FailedControls)
+                        $skipped = [int]($standard.SkippedControls)
+                        $total = $passed + $failed
 
-                    if ($total -eq 0) { continue }
+                        if ($total -eq 0) { continue }
 
-                    $failedPct = [math]::Round(($failed / $total) * 100)
-                    $passedPct = 100 - $failedPct
+                        $failedPct = [math]::Round(($failed / $total) * 100)
+                        $passedPct = 100 - $failedPct
 
-                    # Severity op basis van compliance percentage
-                    $compSeverity = if ($failedPct -gt 50) { "High" }
-                                    elseif ($failedPct -gt 25) { "Medium" }
-                                    else { "Low" }
+                        # Severity op basis van compliance percentage
+                        $compSeverity = if ($failedPct -gt 50) { "High" }
+                        elseif ($failedPct -gt 25) { "Medium" }
+                        else { "Low" }
 
-                    $complianceName = $target.Name
-                    $scoreText      = "$passedPct% compliant ($passed/$total controls passed, $failed failed)"
+                        $complianceName = $target.Name
+                        $scoreText = "$passedPct% compliant ($passed/$total controls passed, $failed failed)"
 
-                    # Alleen rapporteren als er failed controls zijn
-                    if ($failed -gt 0) {
-                        $randomId = (New-Guid).ToString()
-                        $issuesCount++
+                        # Alleen rapporteren als er failed controls zijn
+                        if ($failed -gt 0) {
+                            $randomId = (New-Guid).ToString()
+                            $issuesCount++
 
-                        $severityColor = switch ($compSeverity) {
-                            "High"   { "Red" }
-                            "Medium" { "Yellow" }
-                            default  { "DarkYellow" }
+                            $severityColor = switch ($compSeverity) {
+                                "High" { "Red" }
+                                "Medium" { "Yellow" }
+                                default { "DarkYellow" }
+                            }
+
+                            Write-Host "  [!] " -ForegroundColor $severityColor -NoNewline
+                            Write-Host "Compliance Score - " -NoNewline
+                            Write-Host "[$compSeverity] " -ForegroundColor $severityColor -NoNewline
+                            Write-Host "$complianceName : $scoreText"
+
+                            # CONFIDENTIAL MAPPING
+                            $mappingData += [PSCustomObject]@{
+                                RandomId             = $randomId
+                                RealResourceId       = "/subscriptions/$($Subscription.Id)"
+                                RealResourceType     = "Compliance Score"
+                                RealAssessmentName   = "$complianceName - $scoreText"
+                                RealSubscriptionName = $Subscription.Name
+                                Severity             = $compSeverity
+                                DefenderSeverity     = $compSeverity
+                                StatusDescription    = "$failed controls failed out of $total"
+                                ComplianceFrameworks = $complianceName
+                            }
+
+                            # SAFE ANONYMOUS PAYLOAD
+                            $anonymousFindings += [PSCustomObject]@{
+                                RandomId             = $randomId
+                                ResourceType         = "Compliance Score"
+                                Location             = "Global"
+                                Severity             = $compSeverity
+                                Issues               = @("$complianceName : $scoreText")
+                                OWASP                = "A05"
+                                ComplianceFrameworks = $complianceName
+                                DefenderCategory     = "Regulatory Compliance"
+                                PassedControls       = $passed
+                                FailedControls       = $failed
+                                TotalControls        = $total
+                                CompliancePercentage = $passedPct
+                            }
                         }
-
-                        Write-Host "  [!] " -ForegroundColor $severityColor -NoNewline
-                        Write-Host "Compliance Score - " -NoNewline
-                        Write-Host "[$compSeverity] " -ForegroundColor $severityColor -NoNewline
-                        Write-Host "$complianceName : $scoreText"
-
-                        # CONFIDENTIAL MAPPING
-                        $mappingData += [PSCustomObject]@{
-                            RandomId             = $randomId
-                            RealResourceId       = "/subscriptions/$($Subscription.Id)"
-                            RealResourceType     = "Compliance Score"
-                            RealAssessmentName   = "$complianceName - $scoreText"
-                            RealSubscriptionName = $Subscription.Name
-                            Severity             = $compSeverity
-                            DefenderSeverity     = $compSeverity
-                            StatusDescription    = "$failed controls failed out of $total"
-                            ComplianceFrameworks = $complianceName
+                        else {
+                            Write-Host "  [OK] " -ForegroundColor Green -NoNewline
+                            Write-Host "Compliance Score - $complianceName : $scoreText"
                         }
-
-                        # SAFE ANONYMOUS PAYLOAD
-                        $anonymousFindings += [PSCustomObject]@{
-                            RandomId             = $randomId
-                            ResourceType         = "Compliance Score"
-                            Location             = "Global"
-                            Severity             = $compSeverity
-                            Issues               = @("$complianceName : $scoreText")
-                            OWASP                = "A05"
-                            ComplianceFrameworks = $complianceName
-                            DefenderCategory     = "Regulatory Compliance"
-                            PassedControls       = $passed
-                            FailedControls       = $failed
-                            TotalControls        = $total
-                            CompliancePercentage = $passedPct
-                        }
-                    }
-                    else {
-                        Write-Host "  [OK] " -ForegroundColor Green -NoNewline
-                        Write-Host "Compliance Score - $complianceName : $scoreText"
                     }
                 }
             }
+            else {
+                Write-Host "  [INFO] " -ForegroundColor Cyan -NoNewline
+                Write-Host "No regulatory compliance standards found (Defender CSPM plan may not be active)"
+                Write-AuditLog -Level Info -Message "No compliance standards returned by Defender"
+            }
         }
-        else {
-            Write-Host "  [INFO] " -ForegroundColor Cyan -NoNewline
-            Write-Host "No regulatory compliance standards found (Defender CSPM plan may not be active)"
-            Write-AuditLog -Level Info -Message "No compliance standards returned by Defender"
+        catch {
+            Write-AuditLog -Level Warning -Message "Regulatory compliance score scan failed (non-fatal): $($_.Exception.Message)"
+            Write-Host "  [WARN] " -ForegroundColor Yellow -NoNewline
+            Write-Host "Compliance score scan skipped: $($_.Exception.Message)"
         }
     }
-    catch {
-        Write-AuditLog -Level Warning -Message "Regulatory compliance score scan failed (non-fatal): $($_.Exception.Message)"
-        Write-Host "  [WARN] " -ForegroundColor Yellow -NoNewline
-        Write-Host "Compliance score scan skipped: $($_.Exception.Message)"
+    else {
+        # Defender CSPM Standard plan niet actief â€” voeg Ã©Ã©n Informational finding toe
+        Write-AuditLog -Level Info -Message "Compliance score scan skipped - Defender CSPM Standard plan not active"
+
+        $randomId = (New-Guid).ToString()
+        $issuesCount++
+
+        $issueText = "Regulatory compliance monitoring (NIS2, ISO 27001, MCSB) is niet beschikbaar. Het Defender CSPM Standard plan is vereist voor compliance score tracking."
+        $recommendText = "Upgrade naar Defender CSPM Standard voor volledige compliance tracking (NIS2, ISO 27001, MCSB, Azure Security Benchmark)."
+
+        Write-Host "  [INFO] " -ForegroundColor Cyan -NoNewline
+        Write-Host "Compliance score scan skipped - Defender CSPM Standard plan not active"
+        Write-Host "      - $recommendText" -ForegroundColor DarkGray
+
+        # CONFIDENTIAL MAPPING
+        $mappingData += [PSCustomObject]@{
+            RandomId             = $randomId
+            RealResourceId       = "/subscriptions/$($Subscription.Id)/providers/Microsoft.Security/pricings/CloudPosture"
+            RealResourceType     = "Defender CSPM Plan"
+            RealAssessmentName   = "Advanced compliance monitoring unavailable (Free plan)"
+            RealSubscriptionName = $Subscription.Name
+            Severity             = "Informational"
+            DefenderSeverity     = "Informational"
+            StatusDescription    = $recommendText
+            ComplianceFrameworks = "NIS2, ISO 27001, MCSB"
+        }
+
+        # SAFE ANONYMOUS PAYLOAD
+        $anonymousFindings += [PSCustomObject]@{
+            RandomId             = $randomId
+            ResourceType         = "Defender CSPM Plan"
+            Location             = "Global"
+            Severity             = "Informational"
+            Issues               = @($issueText)
+            OWASP                = "A05"
+            ComplianceFrameworks = "NIS2, ISO 27001, MCSB"
+            DefenderCategory     = "Pricing"
+            PricingTier          = "Free"
+            Recommendation       = $recommendText
+        }
     }
 
     # =========================================================================
