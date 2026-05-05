@@ -295,7 +295,7 @@ function Get-ComplianceFindings {
 
                 $sortedAssessments = $unhealthyAssessments | Sort-Object {
                     $s = $_.Metadata.Severity
-                    if ($severityOrder.ContainsKey($s)) { $severityOrder[$s] } else { 4 }
+                    if ($s -and $severityOrder.ContainsKey($s)) { $severityOrder[$s] } else { 4 }
                 }
 
                 # Cap op 50 meest kritieke bevindingen (performance + output beheersbaar)
