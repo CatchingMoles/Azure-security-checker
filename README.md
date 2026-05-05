@@ -39,11 +39,8 @@ The auditor generates two distinct outputs locally:
 Run the compiled release directly from the Azure Cloud Shell (PowerShell) to perform a full tenant-wide audit.
 PowerShell
 
-# Run the release build with reporting capabilities
-iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/Catchingmoles/Azure-security-checker/main/CatchingMoles-Release.ps1')
-
-# Execute with your analysis endpoint
-Invoke-CatchingMoles -FunctionUrl "https://catchingmoles-functionapp.com/" (For a professional, board-ready PDF report including executive summaries and prioritized action plans, visit CatchingMoles.com. Real functionapp URL redacted for security reasons)
+# Run the release build with reporting capabilities and forward secured information to your function app in .json format
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/CatchingMoles/Azure-security-checker/main/CatchingMoles-Release.ps1'))) -FunctionUrl "https://yourfunction..."
 
 Requirements
 
@@ -51,5 +48,8 @@ Requirements
 
     Modules: Requires the Az PowerShell module (Pre-installed in Cloud Shell).  
 
+Using the Azure Cloud Shell? Please remember you can download the .csv's using the manage files button: <img width="919" height="119" alt="afbeelding" src="https://github.com/user-attachments/assets/07658e3b-b587-4f67-9b76-c45ff9118152" />
+
+
 Interested in the full analytical report?
-The raw scan provides JSON data. Again, for a professional, board-ready PDF report including executive summaries and prioritized action plans, visit CatchingMoles.com.
+The raw scan provides JSON data. For a professional, board-ready PDF report including executive summaries and prioritized action plans, visit CatchingMoles.com.
