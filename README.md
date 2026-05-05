@@ -37,9 +37,11 @@ The auditor generates two distinct outputs locally:
 🚀 Quick Start
 
 Run the compiled release directly from the Azure Cloud Shell (PowerShell) to perform a full tenant-wide audit.
-PowerShell
 
-# Run the release build with reporting capabilities and forward secured information to your function app in .json format
+
+## Run the release build with reporting capabilities and forward secured information to your function app in .json format
+Powershell command:
+
 ```& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/CatchingMoles/Azure-security-checker/main/CatchingMoles-Release.ps1'))) -FunctionUrl "https://yourfunction..."```
 
 Requirements
